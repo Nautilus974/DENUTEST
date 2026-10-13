@@ -15,12 +15,17 @@ add_compile_options(-Wall -Wextra)
 add_library(at_core STATIC
   src/integrity.cpp
   src/anti_debug.cpp
-  src/vm_mini.cpp)
+  src/vm_mini.cpp
+  src/exe_inspect.cpp)
 target_include_directories(at_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 # End-to-end demo program.
 add_executable(at_demo src/demo_main.cpp)
 target_link_libraries(at_demo PRIVATE at_core)
+
+# Read-only static executable inspector (CLI).
+add_executable(exe_inspect src/exe_inspect_main.cpp)
+target_link_libraries(exe_inspect PRIVATE at_core)
 
 # Benchmark.
 add_executable(bench_vm bench/bench_vm.cpp)
@@ -35,6 +40,10 @@ add_test(NAME integrity COMMAND test_integrity)
 add_executable(test_anti_debug tests/test_anti_debug.cpp)
 target_link_libraries(test_anti_debug PRIVATE at_core)
 add_test(NAME anti_debug COMMAND test_anti_debug)
+
+add_executable(test_exe_inspect tests/test_exe_inspect.cpp)
+target_link_libraries(test_exe_inspect PRIVATE at_core)
+add_test(NAME exe_inspect COMMAND test_exe_inspect)
 
 # The demo should exit 0 clean and non-zero when tamper is simulated.
 add_test(NAME demo_clean COMMAND at_demo)
