@@ -87,10 +87,12 @@ emulators, and single-stepping, and can alter behavior when observed.
   register inspection, and timing deltas (`RDTSC`) around short code spans.
 - Demonstrated here (portable analogues) by `src/anti_debug.*`:
   `/proc/self/status` `TracerPid`, a self-`PTRACE_TRACEME` probe, and an
-  `RDTSC`-style timing probe. Verified: under `strace` both the tracer-PID and
-  self-ptrace signals trip; under `gdb` only the tracer-PID signal trips (its
-  forked child is not traced). **This asymmetry is the key lesson: any single
-  signal is weak; protectors combine many.**
+  `RDTSC`-style timing probe. Verified: under `strace -f` both the tracer-PID
+  and self-ptrace signals trip; under plain `strace` (no `-f`) and under `gdb`
+  only the tracer-PID signal trips (the forked child is not traced in either
+  case). **This asymmetry is the key lesson: any single signal is weak, and even
+  the same tool trips different signals depending on flags; protectors combine
+  many.** (Corrected during the independent audit — see `docs/03-independent-audit.md`.)
 
 ### 2.5 Hardware / environment binding (DRM-adjacent — described, not built)
 - **Fact:** Denuvo-protected titles are widely reported to derive values from

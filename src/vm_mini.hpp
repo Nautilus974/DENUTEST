@@ -46,6 +46,11 @@ using Program = std::vector<Instr>;
 // Execute `prog`. On Halt returns reg[a] of the Halt instruction.
 // `steps_out`, if non-null, receives the number of instructions dispatched
 // (a direct measure of virtualization overhead vs. native execution).
+//
+// A well-formed program uses only register indices in [0,kNumRegs) and ShrI
+// shift amounts < 64. `run` validates this once up front; a malformed program
+// is treated as a no-op (returns 0, steps_out=0) rather than invoking undefined
+// behavior. Jump targets outside the program simply halt (the pc<size guard).
 std::uint64_t run(const Program& prog, std::uint64_t* steps_out = nullptr);
 
 // Emit a VM program computing the exact same value as

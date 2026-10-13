@@ -45,7 +45,8 @@ ctest --test-dir build --output-on-failure   # all tests
 ```bash
 # Anti-debug signals trip under observers (see docs/02-results.md §2):
 ./build/at_demo                                   # baseline: nothing trips
-strace -e trace=none ./build/at_demo              # tracer_pid + self_ptrace trip
+strace    -e trace=none ./build/at_demo           # only tracer_pid trips (child not followed)
+strace -f -e trace=none ./build/at_demo           # tracer_pid AND self_ptrace trip
 gdb -batch -ex run -ex quit ./build/at_demo       # only tracer_pid trips
 
 # Virtualization cost across optimization levels (§3):
@@ -65,8 +66,9 @@ gdb -batch -ex run -ex quit ./build/at_demo       # only tracer_pid trips
 ## Key takeaways (measured, not asserted)
 
 - A single flipped bit in a guarded region is reliably detected.
-- No single anti-debug signal is dependable: `strace` and `gdb` trip *different*
-  signals — real protectors must combine many.
+- No single anti-debug signal is dependable: `strace -f` and `gdb` trip
+  *different* signals (and plain `strace` without `-f` trips fewer than `strace -f`)
+  — real protectors must combine many.
 - Code virtualization costs ~6–13× native for the same routine, and hides the
   algorithm's constants/symbols from static disassembly — which is exactly why
   only small, critical routines get virtualized.

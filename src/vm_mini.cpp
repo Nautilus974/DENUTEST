@@ -2,7 +2,31 @@
 
 namespace at_demo::vm {
 
+namespace {
+// Validate a program ONCE before execution so the dispatch loop stays free of
+// per-instruction bounds checks (keeping the benchmark honest). Rejects the two
+// malformed-input cases an independent audit demonstrated as undefined
+// behavior: a register operand outside [0,kNumRegs) (out-of-bounds array
+// access) and a ShrI shift amount >= 64 (shift wider than the type). Unused
+// operand fields are 0 in every well-formed program, so this never rejects a
+// valid one (verified by the equivalence fuzz and the test suite).
+bool is_well_formed(const Program& prog) noexcept {
+    for (const Instr& in : prog) {
+        if (in.a >= kNumRegs || in.b >= kNumRegs || in.c >= kNumRegs)
+            return false;
+        if (in.op == Op::ShrI && in.imm >= 64)
+            return false;
+    }
+    return true;
+}
+}  // namespace
+
 std::uint64_t run(const Program& prog, std::uint64_t* steps_out) {
+    if (!is_well_formed(prog)) {  // malformed bytecode => no-op, avoids UB
+        if (steps_out) *steps_out = 0;
+        return 0;
+    }
+
     std::array<std::uint64_t, kNumRegs> reg{};
     std::uint64_t steps = 0;
     std::size_t pc = 0;

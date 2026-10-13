@@ -27,13 +27,21 @@ Running the demo under different observers (reproducible with the commands in
 
 | Launcher | `tracer_pid` | `self_ptrace` | Lesson |
 |----------|:---:|:---:|--------|
-| direct   | false | false | baseline, no observer |
-| `strace` | **true** | **true** | a syscall tracer trips both |
-| `gdb`    | **true** | false | a debugger trips only the PID check; its forked child is untraced |
+| direct      | false | false | baseline, no observer |
+| `strace`    | **true** | false | the main process is traced, but the fork child is not followed, so its `PTRACE_TRACEME` succeeds |
+| `strace -f` | **true** | **true** | following the fork traces the child too, so its `PTRACE_TRACEME` fails |
+| `gdb`       | **true** | false | debugger trips only the PID check; its forked child is untraced |
 
-**Finding:** no single signal is reliable. `strace` and `gdb` are both
-"debuggers," yet they trip *different* signals. A real protector must combine
-many weak signals; each one alone is trivially bypassed.
+**Finding:** no single signal is reliable. `strace -f` and `gdb` are both
+"debuggers," yet they trip *different* signals — and `strace`'s own `self_ptrace`
+result flips depending on the `-f` flag. A real protector must combine many weak
+signals; each one alone is trivially bypassed.
+
+> **Audit correction (2026-10-13):** the original table and the README reproduce
+> block claimed plain `strace` trips *both* signals. Independent re-runs show
+> plain `strace` (no `-f`) trips only `tracer_pid`; `self_ptrace` requires
+> `strace -f`. Table and README corrected accordingly. See
+> `docs/03-independent-audit.md` §F2.
 
 ## 3. Virtualization cost (performance)
 
@@ -58,9 +66,14 @@ many weak signals; each one alone is trivially bypassed.
 3. **Static footprint asymmetry** (`scripts/analyze.sh`): native `keyed_checksum`
    disassembles to ≈31 instructions with its constants in plain sight
    (`movabs $0xff51afd7ed558ccd`); the VM `run` dispatcher is ≈145 instructions
-   and the *algorithm* it executes is not visible in the disassembly at all —
-   only the interpreter is. This is the whole point of virtualization, made
-   measurable.
+   and the algorithm it executes is **not present in `run()`** — the interpreter
+   is generic. (Audit note: in *this demo* the algorithm's constants are still
+   visible, because `build_checksum_program()` constructs the bytecode at
+   runtime in native code and therefore contains the same `movabs` constant. A
+   real virtualizing protector ships the bytecode as precompiled inert data with
+   no native builder, so the constants would not appear anywhere. The hiding
+   property is a property of `run()`, not of the demo binary as a whole. See
+   `docs/03-independent-audit.md` §F3.)
 
 ## 4. What static analysis leaks (and virtualization hides)
 
@@ -68,8 +81,11 @@ From `scripts/analyze.sh` on our own binary at default optimization:
 - Function **symbol names** (`keyed_checksum`, `crc32`, `vm::run`) — removed by
   stripping.
 - **Literal algorithm constants** (FNV prime, splitmix finalizer) — these are a
-  grep-able fingerprint of the algorithm; virtualization replaces them with VM
-  bytecode so they never appear as native immediates.
+  grep-able fingerprint of the algorithm. Virtualization moves the *executed*
+  algorithm into bytecode so it is absent from the interpreter `run()`; note,
+  however, that this demo's runtime bytecode builder still contains the
+  constants (see §3 audit note). True removal requires shipping precompiled
+  bytecode as data.
 - The exact **`/proc/self/{maps,status}`** accesses that reveal the
   integrity/anti-debug behavior dynamically.
 
