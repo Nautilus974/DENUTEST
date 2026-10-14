@@ -18,7 +18,8 @@ add_library(at_core STATIC
   src/vm_mini.cpp
   src/exe_inspect.cpp
   src/env_checks.cpp
-  src/protection_model.cpp)
+  src/protection_model.cpp
+  src/timing_probe.cpp)
 target_include_directories(at_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 # End-to-end demo program.
@@ -32,6 +33,10 @@ target_link_libraries(exe_inspect PRIVATE at_core)
 # Independent principles-study demo (integrity + anti-debug + env + VM).
 add_executable(lab_demo src/lab_demo_main.cpp)
 target_link_libraries(lab_demo PRIVATE at_core)
+
+# Timing-detection experiment (prints real measured cycle costs on this host).
+add_executable(timing_experiment src/timing_experiment_main.cpp)
+target_link_libraries(timing_experiment PRIVATE at_core)
 
 # Benchmark.
 add_executable(bench_vm bench/bench_vm.cpp)
@@ -62,6 +67,10 @@ add_test(NAME security_properties COMMAND test_security_properties)
 add_executable(test_protection_model tests/test_protection_model.cpp)
 target_link_libraries(test_protection_model PRIVATE at_core)
 add_test(NAME protection_model COMMAND test_protection_model)
+
+add_executable(test_timing_probe tests/test_timing_probe.cpp)
+target_link_libraries(test_timing_probe PRIVATE at_core)
+add_test(NAME timing_probe COMMAND test_timing_probe)
 
 # The lab demo must exit 0 clean and non-zero only under a real tamper.
 add_test(NAME lab_demo_clean COMMAND lab_demo)
