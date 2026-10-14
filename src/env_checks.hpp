@@ -13,6 +13,7 @@
 // anti-tamper that blocked every VM would also block paying customers.
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,13 @@ struct EnvSignal {
     std::string detail;         // observed evidence
     std::string false_positive; // why this signal is unreliable
 };
+
+// Pure decision logic for the hypervisor-present hint: true iff CPUID.1:ECX[31]
+// is set. Extracted so the verdict can be unit-tested against crafted inputs.
+// Security note: the verdict is purely a function of what the environment
+// *reports*. A more-privileged layer (a hypervisor at Ring -1) can report
+// whatever it likes, so this is not a trust boundary — see docs/09.
+bool hypervisor_bit_from_ecx(std::uint32_t ecx) noexcept;
 
 // CPUID leaf 1, ECX bit 31: the "hypervisor present" hint. Set by virtually all
 // hypervisors. False positive: cloud servers and any player in a VM set it.

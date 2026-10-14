@@ -14,13 +14,17 @@
 
 namespace at_demo::env {
 
+bool hypervisor_bit_from_ecx(std::uint32_t ecx) noexcept {
+    return (ecx >> 31) & 1u;  // CPUID.1:ECX[31] = "hypervisor present" hint
+}
+
 EnvSignal hypervisor_bit_signal() {
     EnvSignal s{"hypervisor_bit", false, "unsupported on this platform",
                 "n/a"};
 #if defined(AT_HAVE_CPUID)
     unsigned a = 0, b = 0, c = 0, d = 0;
     if (__get_cpuid(1, &a, &b, &c, &d)) {
-        bool set = (c >> 31) & 1u;
+        bool set = hypervisor_bit_from_ecx(c);
         s.triggered = set;
         s.detail = std::string("CPUID.1:ECX[31]=") + (set ? "1" : "0");
     } else {

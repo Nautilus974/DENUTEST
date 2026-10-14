@@ -54,6 +54,10 @@ add_executable(test_env_checks tests/test_env_checks.cpp)
 target_link_libraries(test_env_checks PRIVATE at_core)
 add_test(NAME env_checks COMMAND test_env_checks)
 
+add_executable(test_security_properties tests/test_security_properties.cpp)
+target_link_libraries(test_security_properties PRIVATE at_core)
+add_test(NAME security_properties COMMAND test_security_properties)
+
 # The lab demo must exit 0 clean and non-zero only under a real tamper.
 add_test(NAME lab_demo_clean COMMAND lab_demo)
 add_test(NAME lab_demo_tamper COMMAND lab_demo --tamper)
