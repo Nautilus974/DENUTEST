@@ -31,6 +31,9 @@ struct SectionInfo {
     std::uint32_t type = 0;       // ELF sh_type, or PE characteristics
     std::uint64_t flags = 0;
     bool occupies_file = true;    // false for ELF SHT_NOBITS (.bss)
+    double entropy = -1.0;        // Shannon bits/byte over file bytes; <0 = not computed
+    bool writable = false;        // W flag set
+    bool executable = false;      // X flag set
 };
 
 struct SegmentInfo {             // ELF program headers
@@ -75,7 +78,15 @@ struct Report {
     // PE extras (tested subset).
     std::vector<std::string> pe_data_dirs;  // "name: rva=.. size=.."
     std::vector<std::string> pe_imports;     // imported DLL names
+
+    // Heuristic "looks packed/protected?" observations (NOT proof — see docs/08).
+    // High-entropy executable sections, W^X violations, anonymous code, etc.
+    // Every entry is a *soft* signal with well-known false positives.
+    std::vector<std::string> anomalies;
 };
+
+// Shannon entropy in bits/byte (0..8) over a buffer. 0 for empty input.
+double shannon_entropy(const std::uint8_t* data, std::size_t len);
 
 // ---- Bounds-checked reader (the single point that touches raw bytes) -------
 class Reader {
@@ -84,6 +95,12 @@ public:
         : data_(data), size_(size) {}
 
     std::size_t size() const noexcept { return size_; }
+
+    // Bounded raw pointer to [off, off+len); nullptr if out of range. Used only
+    // for whole-range scans (e.g. entropy); still range-checked here.
+    const std::uint8_t* bytes(std::uint64_t off, std::uint64_t len) const noexcept {
+        return in_bounds(off, len) ? data_ + off : nullptr;
+    }
 
     // True iff [off, off+len) lies fully within the buffer, overflow-safe.
     bool in_bounds(std::uint64_t off, std::uint64_t len) const noexcept {

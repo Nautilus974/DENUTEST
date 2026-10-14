@@ -57,6 +57,33 @@ static std::vector<std::uint8_t> make_min_elf64() {
     return b;
 }
 
+// Minimal ELF64 with ONE real section whose bytes and flags we control, so we
+// can test entropy + the packing/protection heuristics deterministically.
+// `flags`: ELF sh_flags (0x1=WRITE, 0x4=EXECINSTR). `high_entropy`: fill the
+// section with all 256 byte values (entropy ~8) vs a constant byte (entropy 0).
+static std::vector<std::uint8_t> make_elf_with_section(std::uint64_t flags,
+                                                       bool high_entropy) {
+    auto b = make_min_elf64();
+    const std::uint64_t shoff = 64, shent = 64, data_off = 64 + 2 * 64;  // 192
+    const std::uint64_t data_sz = 256;
+    put64(b, 40, shoff);     // e_shoff
+    put16(b, 58, shent);     // e_shentsize
+    put16(b, 60, 2);         // e_shnum (0=NULL, 1=our section)
+    put16(b, 62, 0);         // e_shstrndx = 0 (NULL => names unavailable; fine)
+    b.resize(data_off + data_sz, 0);
+    // Section header #1 at shoff + 64.
+    std::uint64_t s = shoff + 64;
+    put32(b, s + 4, 1);          // sh_type = PROGBITS
+    put64(b, s + 8, flags);      // sh_flags
+    put64(b, s + 24, data_off);  // sh_offset
+    put64(b, s + 32, data_sz);   // sh_size
+    // Section payload.
+    for (std::uint64_t i = 0; i < data_sz; ++i)
+        b[data_off + i] = high_entropy ? static_cast<std::uint8_t>(i & 0xff)
+                                       : 0x00;
+    return b;
+}
+
 // Hand-built valid PE32+ with one section (.idata) and one import (a DLL name).
 static std::vector<std::uint8_t> make_min_pe() {
     std::vector<std::uint8_t> b(0x600, 0);
@@ -255,6 +282,69 @@ static void test_real_self_exe() {
           "self exe has a symbol table with function symbols");
 }
 
+// ---- entropy & packing/protection heuristics ------------------------------
+static void test_entropy_math() {
+    std::vector<std::uint8_t> flat(1024, 0x41);  // all 'A'
+    CHECK(shannon_entropy(flat.data(), flat.size()) == 0.0,
+          "entropy of a constant buffer is 0");
+    std::vector<std::uint8_t> allbytes(256);
+    for (int i = 0; i < 256; ++i) allbytes[i] = std::uint8_t(i);
+    double h = shannon_entropy(allbytes.data(), allbytes.size());
+    CHECK(h > 7.99, "entropy of all-256-values buffer is ~8 bits/byte");
+    CHECK(shannon_entropy(nullptr, 0) == 0.0, "entropy of empty buffer is 0");
+}
+
+static void test_high_entropy_exec_flagged() {
+    auto b = make_elf_with_section(/*flags=*/0x4 /*EXEC*/, /*high_entropy=*/true);
+    auto r = analyze(b.data(), b.size());
+    CHECK(!r.malformed, "entropy fixture parses");
+    bool exec_hi = false, high_e = false;
+    for (auto& s : r.sections)
+        if (s.executable && s.entropy > 7.9) high_e = true;
+    for (auto& a : r.anomalies)
+        if (a.find("high-entropy executable") != std::string::npos) exec_hi = true;
+    CHECK(high_e, "executable section reports entropy ~8");
+    CHECK(exec_hi, "high-entropy executable section raises a heuristic signal");
+}
+
+static void test_high_entropy_data_not_flagged() {
+    // Same high-entropy bytes but NOT executable (e.g. compressed resource):
+    // the heuristic must NOT raise the executable-packing signal. This is the
+    // explicit false-positive guard — data entropy alone means nothing.
+    auto b = make_elf_with_section(/*flags=*/0x0, /*high_entropy=*/true);
+    auto r = analyze(b.data(), b.size());
+    bool exec_hi = false;
+    for (auto& a : r.anomalies)
+        if (a.find("high-entropy executable") != std::string::npos) exec_hi = true;
+    CHECK(!exec_hi, "high-entropy NON-executable section does NOT trip the exec signal");
+}
+
+static void test_wx_violation_flagged() {
+    auto b = make_elf_with_section(/*flags=*/0x1 | 0x4 /*WRITE|EXEC*/, false);
+    auto r = analyze(b.data(), b.size());
+    bool wx = false;
+    for (auto& a : r.anomalies)
+        if (a.find("W^X") != std::string::npos) wx = true;
+    CHECK(wx, "writable+executable section raises a W^X heuristic signal");
+}
+
+static void test_normal_binary_no_false_alarm() {
+    // A normally-compiled ELF (/proc/self/exe) must not trip W^X, and its .text
+    // entropy must be a sane in-range value (compiled code, not ~8).
+    std::string err;
+    auto r = analyze_file("/proc/self/exe", &err);
+    if (r.malformed && r.format == Format::Unknown) {
+        std::printf("  skip: /proc/self/exe unavailable\n");
+        return;
+    }
+    bool wx = false;
+    for (auto& a : r.anomalies) if (a.find("W^X") != std::string::npos) wx = true;
+    CHECK(!wx, "normal binary has no W^X section (no false alarm)");
+    double text_h = -1.0;
+    for (auto& s : r.sections) if (s.name == ".text") text_h = s.entropy;
+    CHECK(text_h > 0.0 && text_h < 8.0, "normal .text has in-range entropy (not ~0, not ~8)");
+}
+
 int main() {
     std::puts("test_exe_inspect:");
     test_reader_bounds();
@@ -271,6 +361,11 @@ int main() {
     test_pe_truncated();
     test_pe_section_table_oob();
     test_real_self_exe();
+    test_entropy_math();
+    test_high_entropy_exec_flagged();
+    test_high_entropy_data_not_flagged();
+    test_wx_violation_flagged();
+    test_normal_binary_no_false_alarm();
     if (g_fails) { std::printf("FAILED (%d)\n", g_fails); return 1; }
     std::puts("ALL PASS");
     return 0;

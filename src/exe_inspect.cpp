@@ -1,5 +1,7 @@
 #include "exe_inspect.hpp"
 
+#include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -42,6 +44,20 @@ std::optional<std::uint64_t> Reader::u64(std::uint64_t off, bool big) const noex
         hi = *u32(off + 4, false);
     }
     return (hi << 32) | lo;
+}
+
+double shannon_entropy(const std::uint8_t* data, std::size_t len) {
+    if (!data || len == 0) return 0.0;
+    std::array<std::uint64_t, 256> freq{};
+    for (std::size_t i = 0; i < len; ++i) ++freq[data[i]];
+    double h = 0.0;
+    const double n = static_cast<double>(len);
+    for (std::uint64_t f : freq) {
+        if (!f) continue;
+        double p = static_cast<double>(f) / n;
+        h -= p * std::log2(p);
+    }
+    return h;  // 0 (uniform byte) .. 8 (max, uniformly random bytes)
 }
 
 bool Reader::match(std::uint64_t off, const char* lit, std::size_t n) const noexcept {
@@ -320,6 +336,8 @@ void parse_elf(Reader r, Report& rep) {
         si.size = x.size;
         si.type = x.type;
         si.flags = x.flags;
+        si.writable = (x.flags & 0x1) != 0;        // SHF_WRITE
+        si.executable = (x.flags & 0x4) != 0;      // SHF_EXECINSTR
         si.occupies_file = (x.type != 8 /*NOBITS*/);
         if (si.occupies_file && x.size && !r.in_bounds(x.offset, x.size))
             rep.warnings.push_back("ELF: section '" + si.name + "' (#" +
@@ -497,6 +515,8 @@ void parse_pe(Reader r, Report& rep) {
         si.size = s.rawsize;
         si.type = s.chars;
         si.flags = s.chars;
+        si.executable = (s.chars & 0x20000000u) != 0;  // IMAGE_SCN_MEM_EXECUTE
+        si.writable = (s.chars & 0x80000000u) != 0;    // IMAGE_SCN_MEM_WRITE
         rep.sections.push_back(std::move(si));
         secs.push_back(std::move(s));
     }
@@ -545,6 +565,32 @@ void parse_pe(Reader r, Report& rep) {
     }
 }
 
+// Soft "looks packed/protected?" heuristics. These are deliberately
+// conservative and each has well-known false positives; see docs/08. They
+// compute per-section entropy and flag a few structural oddities. None of this
+// is proof of any particular protector, and it never executes the target.
+void compute_heuristics(Reader r, Report& rep) {
+    const double kHighEntropy = 7.2;  // bits/byte; near-random data
+    for (SectionInfo& s : rep.sections) {
+        if (s.occupies_file && s.size > 0) {
+            const std::uint8_t* p = r.bytes(s.offset, s.size);
+            if (p) s.entropy = shannon_entropy(p, static_cast<std::size_t>(s.size));
+        }
+        if (s.writable && s.executable)
+            rep.anomalies.push_back("W^X: section '" + s.name +
+                                    "' is writable AND executable");
+        if (s.executable && s.entropy >= kHighEntropy) {
+            std::ostringstream o;
+            o << "high-entropy executable section '" << s.name << "' (H="
+              << s.entropy << " bits/byte) — consistent with packing/encryption/"
+                 "virtualization, but ALSO with compressed/encrypted data; NOT proof";
+            rep.anomalies.push_back(o.str());
+        }
+        if (s.executable && s.name.empty())
+            rep.anomalies.push_back("executable section with no name");
+    }
+}
+
 }  // namespace
 
 // ======================= dispatch / IO / render ============================
@@ -559,8 +605,10 @@ Report analyze(const std::uint8_t* data, std::size_t size) {
     Reader r(data, size);
     if (r.match(0, "\x7f""ELF", 4)) {
         parse_elf(r, rep);
+        compute_heuristics(r, rep);
     } else if (r.match(0, "MZ", 2)) {
         parse_pe(r, rep);
+        compute_heuristics(r, rep);
     } else {
         rep.format = Format::Unknown;
         rep.malformed = true;
@@ -604,6 +652,13 @@ std::string format_report(const Report& r) {
           << "  off=" << hex(s.offset) << " size=" << hex(s.size)
           << " vaddr=" << hex(s.vaddr);
         if (r.format == Format::Elf) o << " type=" << elf_sh_type(s.type);
+        if (s.executable) o << " X";
+        if (s.writable) o << " W";
+        if (s.entropy >= 0.0) {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), " H=%.2f", s.entropy);
+            o << buf;
+        }
         if (!s.occupies_file) o << " (no file bytes)";
         o << "\n";
     }
@@ -631,6 +686,11 @@ std::string format_report(const Report& r) {
     if (!r.pe_imports.empty()) {
         o << "imports      : " << r.pe_imports.size() << " DLL(s)\n";
         for (const auto& d : r.pe_imports) o << "    - " << d << "\n";
+    }
+    if (!r.anomalies.empty()) {
+        o << "heuristics   : " << r.anomalies.size()
+          << " soft signal(s) (NOT proof — see docs/08)\n";
+        for (const auto& a : r.anomalies) o << "    ? " << a << "\n";
     }
     for (const auto& w : r.warnings) o << "WARN  " << w << "\n";
     for (const auto& e : r.errors)   o << "ERROR " << e << "\n";
