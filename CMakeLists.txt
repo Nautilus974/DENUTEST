@@ -17,7 +17,8 @@ add_library(at_core STATIC
   src/anti_debug.cpp
   src/vm_mini.cpp
   src/exe_inspect.cpp
-  src/env_checks.cpp)
+  src/env_checks.cpp
+  src/protection_model.cpp)
 target_include_directories(at_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 # End-to-end demo program.
@@ -57,6 +58,10 @@ add_test(NAME env_checks COMMAND test_env_checks)
 add_executable(test_security_properties tests/test_security_properties.cpp)
 target_link_libraries(test_security_properties PRIVATE at_core)
 add_test(NAME security_properties COMMAND test_security_properties)
+
+add_executable(test_protection_model tests/test_protection_model.cpp)
+target_link_libraries(test_protection_model PRIVATE at_core)
+add_test(NAME protection_model COMMAND test_protection_model)
 
 # The lab demo must exit 0 clean and non-zero only under a real tamper.
 add_test(NAME lab_demo_clean COMMAND lab_demo)
